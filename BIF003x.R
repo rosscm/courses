@@ -1,5 +1,6 @@
 # edX BIF003x
 # Statistical Analysis in Bioinformatics
+setwd("/Users/catherineross/projects/GIN/data/edX/BIF003x")
 
 ########
 ## Week 2 - Basic DNA Analysis
@@ -17,7 +18,7 @@ cox1 <- read.fasta("cox1.fasta", seqtype = "AA")
 AB003468 <- read.GenBank("AB003468", as.character = "TRUE")
 
 # Save sequence in FASTA
-write.dna(AB003468, file ="AB003468.fasta", format = "fasta", append = FALSE, nbcol = 6, colsep = " ", colw = 10)
+write.dna(AB003468, file = "AB003468.fasta", format = "fasta", append = FALSE, nbcol = 6, colsep = " ", colw = 10)
 
 # Search for sequences using rentrez_search
 entrez_search(db = "nucleotide", term = "human superoxide dismutase")
@@ -195,9 +196,127 @@ plot(fitJC)
 # Bootstrap for statistical power
 # Use fit ML tree with 100 bootstrap replicates and nearest-neighbour
 # interchange for branch swapping
-bootstrapped <- bootstrap.pml(fitJC, bs=100, optNni=TRUE, multicore=TRUE, control = pml.control(trace=0))
+bootstrapped <- bootstrap.pml(fitJC, bs = 100, optNni = TRUE, multicore = TRUE, control = pml.control(trace=0))
 
 # Use the phangorn bootstrap plotting routine and takes all of the fitJC trees generated in the
 # bootstrapped dataset and displays results where the support (number of trees that agree out of the
 # 100) is greater than 50; the type controls the tree display (here we use p for phylogram).
 plotBS(midpoint(fitJC$tree), bootstrapped, p = 50, type = "p")
+
+########
+## Week 4 - Genomic Analysis
+########
+
+library(Biostrings)
+library(seqinr)
+
+# Most common form of predictive analysis is gene prediction - determining
+# whether or not a region may be a protein-coding gene.
+# Common features include:
+## 1) ORFs - long stretches of DNA where codons do not contain STOP sequences
+## 2) Promotors - where transcriptase binds to DNA and begins transcription.
+##    Tend to be conserved; dbs list known promotor motifs
+## 3) CpG islands - regions of high CG repeats, which often appear near
+##    transcriptional start sites, but separate from other promotor sequences.
+## 4) Splice sites - regions (exclusive to eukaryotes) where recognizable
+##    motifs define boundaries between exons and introns.
+
+# ORF finding
+# Start codon is typically ATG
+# Three canonical STOP codons in DNA:
+## TAG ("amber")
+## TAA ("ochre")
+### TGA ("opal")
+
+# Read in sequence data
+AB003468 <- readDNAStringSet("AB003468.fasta")
+AB003468 <- as.character(AB003468)
+sequence <- AB003468
+
+# Match codon sequences
+start_codon <- "ATG"
+stop_codons <- c("TGA","TAA","TAG")
+
+# Store results in objects
+start_pos <- c()
+revstart_pos <- c()
+stop_pos <- c()
+revstop_pos <- c()
+
+# Search for start codons
+# First 3 reading frames
+matches <- matchPattern(start_codon, sequence)
+start_pos <- c(start_pos, start(matches))
+
+# Reverse complement reading frames
+revmatches <- matchPattern(reverseComplement(DNAString(start_codon)), sequence)
+revstart_pos <- c(revstart_pos, start(revmatches))
+
+# Sort results
+start_pos <- sort(start_pos)
+revstart_pos <- sort(revstart_pos, decreasing = TRUE)
+
+# Search for stop codons
+for (codon in stop_codons) {
+  matches <- matchPattern(codon, sequence)
+  stop_pos <- c(stop_pos, start(matches))
+  revmatches <- matchPattern(reverseComplement(DNAString(codon)), sequence)
+  revstop_pos <- c(revstop_pos, start(revmatches))
+}
+
+# Sort results
+stop_pos <- sort(stop_pos)
+revstop_pos <- sort(revstop_pos, decreasing = TRUE)
+
+# Now that we have our START and STOP sites identified, we can map out the actual
+# ORFs that might exist in this sequence.
+# This is a matter of iteratively plotting each START and moving down the sequence
+# in the same frame until we hit a STOP.
+k <- 150
+stop_pointers <- c(0,0,0)
+count <- 0
+
+# k is our threshold – minimum ORF is 150 (or 50 amino acids).
+# The stop_pointers will hold the location of the STOPS in each reading frame.
+# Count is simply the number of ORFs we find.
+
+for (current_start in start_pos) {
+
+  # Keep track of the frame we are in as well as the most recent STOP
+  frame <- (current_start%%3) + 1
+  stop_pointer <- stop_pointers[frame]
+
+  # If stop pointer is still zero OR if the stop_pos (the current stop position)
+  # of the current stop pointer is less than the current START position – we
+  # increment the stop_pointer and continue
+  if (stop_pointer <= length(stop_pos) && (stop_pointer == 0
+    || stop_pos[stop_pointer] < current_start)) {
+      stop_pointer <- stop_pointer + 1
+
+      while ((stop_pointer <= length(stop_pos))
+        && ((stop_pos[stop_pointer] <= current_start)
+          || (((stop_pos[stop_pointer]%%3) + 1) != frame))
+    ){
+      stop_pointer <- stop_pointer + 1
+    }
+    stop_pointers[frame] <- stop_pointer
+
+    if (stop_pointer <= length(stop_pos)) {
+      if ((stop_pos[stop_pointer] + 2 - current_start + 1) > k) {
+        count <- count + 1
+        print(count)
+        print("Frame:")
+        print(frame)
+        print("Start:")
+        print(current_start)
+        print("Stop:")
+        print(stop_pos[stop_pointer])
+        print("Length:")
+        lengths <- c(lengths, (stop_pos[stop_pointer]+2 - current_start+1))
+        print(stop_pos[stop_pointer]+2 - current_start+1)
+        print("Sequence:")
+        print(subseq(sequence, current_start, stop_pos[stop_pointer]+2))
+      }
+    }
+  }
+}
